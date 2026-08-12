@@ -1,0 +1,17 @@
+# YAML 1.2
+---
+cff-version: "1.2.0"
+title: "yaml2nuctrans"
+authors:
+  - family-names: Chen
+    given-names: Qian
+    orcid: "https://orcid.org/0000-0001-7103-9330"
+date-released: 2026-08-02
+version: "1.0.0"
+repository-code: "https://github.com/CQ-QianChen/yaml2nuctrans"
+keywords:
+  - "radionuclide transport"
+  - "repository safety"
+  - "configuration-driven simulation"
+  - "uncertainty quantification"
+message: "If you use this software, please cite it using these metadata."
