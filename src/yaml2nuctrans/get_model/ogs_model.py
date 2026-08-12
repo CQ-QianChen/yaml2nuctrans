@@ -10,7 +10,7 @@ from yaml2nuctrans.primary_parameters.rock_database import RockData
 from yaml2nuctrans.primary_parameters.nuclide_database import NuclideData
 from yaml2nuctrans.config.ogs_sim_config import SimulationConfig
 from yaml2nuctrans.primary_parameters.geometry import GeometryData
-from yaml2nuctrans.read_results.read_ogs_model_results import read_vtu_field, read_sim_results, build_result_template, merge_sample_results, save_results_to_hdf5
+from yaml2nuctrans.read_results.read_ogs_model_results import read_vtu_field, read_sim_results, build_result_template, merge_sample_results, save_results_to_hdf5, sort_results
 from yaml2nuctrans.config.generate_ogs_prj import generate_ogsprj
 from yaml2nuctrans.sampling.apply_sampled_data import count_samples, load_sampled_data, apply_sample
 
@@ -142,7 +142,7 @@ def ogs_model(
         )
         if not keep_vtu:
             shutil.rmtree(output_dir, ignore_errors=True)
-        return results
+        return sort_results(results, get_field_component_index, sort_by_index)
 
     elif run_mode == "ensemble":
         # load samples
@@ -221,7 +221,7 @@ def ogs_model(
                 if not keep_vtu:
                     shutil.rmtree(sample_output_dir, ignore_errors=True)
 
-        return all_run_results
+        return sort_results(all_run_results, get_field_component_index, sort_by_index)
 
     else:
         raise ValueError(

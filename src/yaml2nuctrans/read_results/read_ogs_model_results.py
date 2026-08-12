@@ -235,6 +235,24 @@ def read_sim_results(results_output_dir, sim_config, nuclide_database, get_field
 
     return qoi_results
 
+def sort_results(results: dict, get_field_component_index, sort_by_index: int) -> dict:
+    """
+    Sort each QoI dict: primary key = time t (last key element),
+    secondary key = the coordinate selected by sort_by_index.
+    """
+    if sort_by_index in get_field_component_index:
+        # e.g. get_field_component_index=[0, 2], sort_by_index=2 -> key position 1
+        coord_pos = list(get_field_component_index).index(sort_by_index)
+        sort_key = lambda k: (k[-1], k[coord_pos])
+    else:
+        # requested coordinate was not extracted -> sort by time only
+        sort_key = lambda k: (k[-1],)
+
+    return {
+        qoi_name: {k: qoi_dict[k] for k in sorted(qoi_dict.keys(), key=sort_key)}
+        for qoi_name, qoi_dict in results.items()
+    }
+
 def save_dict_to_group(group: h5py.Group, d: dict) -> None:
     """Recursively write a nested {key: array} dict as HDF5 groups/datasets."""
     for key, value in d.items():
