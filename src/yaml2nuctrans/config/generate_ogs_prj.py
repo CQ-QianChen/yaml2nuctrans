@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from ogstools.ogs6py import Project
-from astropy import constants as const
 from collections import deque
 import numpy as np
 import radioactivedecay as rd
@@ -181,7 +180,7 @@ def _add_process(
     if advection:
         body_force = " ".join(
             ["0"] * (meshes.dimension - 1)
-            + [f"-{const.g0.value}"]
+            + [f"-{9.80665}"]
         )
 
     model.processes.set_process(
