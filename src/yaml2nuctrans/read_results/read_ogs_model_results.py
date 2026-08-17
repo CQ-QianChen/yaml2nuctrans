@@ -9,7 +9,6 @@ import numpy as np
 import radioactivedecay as rd
 import vtuIO
 import vtk
-from astropy import constants as const
 
 def get_cell_vals(mesh, field_of_interest):
     """Function to read a specific cell data field and store it alongside its corresponding cell geometry (points that define the cell) in a dictionary.
