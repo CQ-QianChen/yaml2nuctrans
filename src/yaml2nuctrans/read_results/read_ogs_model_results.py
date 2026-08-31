@@ -194,9 +194,9 @@ def merge_sample_results(all_run_results, qoi_results, sample_index) -> dict:
         qoi_results (dict): Results of one sample run.
         sample_index (int): Index of the current sample run.
     """
-    merged = copy.deepcopy(all_run_results)
+
     for QoI, entries in qoi_results.items():
-        shared = merged[QoI]
+        shared = all_run_results[QoI]
 
         new_keys = entries.keys() - shared.keys()
         missing_keys = shared.keys() - entries.keys()
@@ -212,7 +212,7 @@ def merge_sample_results(all_run_results, qoi_results, sample_index) -> dict:
         for key, values in entries.items():
             shared[key].extend(values)
             
-    return merged
+    return all_run_results
 
 def read_sim_results(results_output_dir, sim_config, nuclide_database, get_field_component_index, sort_by_index) -> dict:
     # build the result container ONCE, before the loop
