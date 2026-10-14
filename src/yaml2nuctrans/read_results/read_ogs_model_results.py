@@ -295,7 +295,7 @@ def save_results_to_group(results: dict, parent: h5py.Group) -> None:
                     if v is not None:
                         data[i, j, :] = np.asarray(v, dtype=np.float64)
 
-        grp.create_dataset("values", data=data)
+        grp.create_dataset("values", data=data, compression="gzip", compression_opts=4, shuffle=True)
         grp.attrs["n_keys"] = n_keys
         grp.attrs["n_samples"] = n_samples
         grp.attrs["n_key_dims"] = key_arr.shape[1]
