@@ -1,0 +1,15 @@
+uncertain_parameters:
+  geometry:
+    rock_interface:
+      - Pseudo_Claystone_bottom
+  rock_data:
+    Pseudo_Claystone:
+      - porosity
+      - density
+      - intrinsic_permeability
+  nuclide_sorption_data:
+    Pseudo_Claystone:
+      - I-129
+  nuclide_water_diffusivity_data:
+    Pseudo_Claystone:
+      - I-129
