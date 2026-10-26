@@ -21,8 +21,16 @@ def generate_ogsprj(
     rock_database,
     nuclide_database,
     sim_config,
+    mesh_params=None,
 ):
-    """Create an OGS project using resolved model dataclasses."""
+    """Create an OGS project using resolved model dataclasses.
+
+    Args:
+        mesh_params (dict, optional): Keyword overrides forwarded to
+            `CreateMesh1D.generate_1d_meshes` (e.g. `dz_min`, `mz_min`)
+            for mesh-resolution/refinement studies. Defaults to None
+            (library defaults).
+    """
     
     project_name = sim_config.project_name
 
@@ -47,7 +55,12 @@ def generate_ogsprj(
         units=units,
     )
     
-    mesh_files = MeshBuilder.build(sim_config=sim_config, units=units, output_directory=output_dir)
+    mesh_files = MeshBuilder.build(
+        sim_config=sim_config,
+        units=units,
+        output_directory=output_dir,
+        mesh_params=mesh_params,
+    )
 
     python_bc = PythonBoundaryConditionScript.from_config(config=sim_config,output_path=f"{output_dir}/python_DirichletBC.py")
 

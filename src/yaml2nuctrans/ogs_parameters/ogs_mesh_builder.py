@@ -33,13 +33,17 @@ class MeshBuilder:
         pass
 
     @staticmethod
-    def build(sim_config, units, output_directory):
+    def build(sim_config, units, output_directory, mesh_params=None):
         """create OGS meshes based on the simulation setup and units.
 
         Args:
             sim_config (SimulationConfig): The simulation configuration.
             units (Units1D): The units for the simulation.
             output_directory (str): The directory to output the generated mesh files.
+            mesh_params (dict, optional): Keyword overrides forwarded to
+                `CreateMesh1D.generate_1d_meshes` (e.g. `dz_min`,
+                `mz_min`) for mesh-resolution/refinement studies.
+                Defaults to None (library defaults).
 
         Returns:
             MeshFiles1D: Paths and standard names of the required meshes.
@@ -47,29 +51,37 @@ class MeshBuilder:
             NotImplementedError: If 2D or 3D mesh generation is selected.
         """
         if sim_config.mesh_dimension == 1:
-            return MeshBuilder.build_1d(units, sim_config, output_directory)
+            return MeshBuilder.build_1d(units, sim_config, output_directory, mesh_params)
 
         if sim_config.mesh_dimension == 2:
             return MeshBuilder.build_2d()
 
         return MeshBuilder.build_3d()
-    
+
     @staticmethod
-    def build_1d(units, sim_config, output_directory):
+    def build_1d(units, sim_config, output_directory, mesh_params=None):
         """create 1D mesh
 
         Args:
             units (Units1D): The units for the simulation.
             sim_config (SimulationConfig): The simulation configuration.
             output_directory (str): The directory to output the generated mesh files.
+            mesh_params (dict, optional): Keyword overrides forwarded to
+                `CreateMesh1D.generate_1d_meshes`. Defaults to None
+                (library defaults).
 
         Returns:
             MeshFiles1D: Paths and standard names of the required meshes.
         """
-        
+
 
         if sim_config.create_meshes:
-            CreateMesh1D.generate_1d_meshes(units=units, source=sim_config.source, output_msh_path=output_directory)
+            CreateMesh1D.generate_1d_meshes(
+                units=units,
+                source=sim_config.source,
+                output_msh_path=output_directory,
+                **(mesh_params or {}),
+            )
             output_directory = "" # relative to the project file
         return MeshFiles1D(
             file_path=output_directory, 

@@ -42,9 +42,12 @@ class PythonBoundaryConditionScript:
             TypeError: If the source is not a 1D point source.
         """
 
+        if not config.create_python_bc:
+            return cls(output_path=None)
+
         output_path = Path(output_path)
         if config.create_python_bc:
-            
+
             if config.mesh_dimension != 1:
                 raise ValueError(
                     "The default Python BC script currently supports "
