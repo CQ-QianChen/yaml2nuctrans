@@ -135,7 +135,7 @@ def ogs_model(
             nuclide_database=nuclide_database,
             sim_config=sim_config,
         )
-        model_for_run.run_model(logfile=Path(sample_output_dir)/'out.log' ,write_logs=True)
+        model_for_run.run_model(logfile=Path(output_dir)/'out.log' ,write_logs=True)
         results = read_sim_results(
             output_dir, sim_config, nuclide_database,
             get_field_component_index, sort_by_index,

@@ -10,6 +10,7 @@ import radioactivedecay as rd
 import vtuIO
 import vtk
 
+
 def get_cell_vals(mesh, field_of_interest):
     """Function to read a specific cell data field and store it alongside its corresponding cell geometry (points that define the cell) in a dictionary.
 
@@ -173,18 +174,20 @@ def read_vtu_field(
     os.chdir(original_dir)
     return vals
 
+
 def build_result_template(sim_config, nuclide_database) -> dict:
     results = {}
     for QoI in sim_config.quantity_of_interests:
-        if QoI == 'concentration':
+        if QoI == "concentration":
             for nuclide in nuclide_database.nuclide_names:
                 results[nuclide] = {}
-        elif QoI == 'Flux':
+        elif QoI == "Flux":
             for nuclide in nuclide_database.nuclide_names:
                 results[nuclide + QoI] = {}
         else:
             results[QoI] = {}
     return results
+
 
 def merge_sample_results(all_run_results, qoi_results, sample_index) -> dict:
     """Merge one sample's results into the shared container.
@@ -211,10 +214,17 @@ def merge_sample_results(all_run_results, qoi_results, sample_index) -> dict:
 
         for key, values in entries.items():
             shared[key].extend(values)
-            
+
     return all_run_results
 
-def read_sim_results(results_output_dir, sim_config, nuclide_database, get_field_component_index, sort_by_index) -> dict:
+
+def read_sim_results(
+    results_output_dir,
+    sim_config,
+    nuclide_database,
+    get_field_component_index,
+    sort_by_index,
+) -> dict:
     # build the result container ONCE, before the loop
     qoi_results = build_result_template(sim_config, nuclide_database)
 
@@ -223,16 +233,21 @@ def read_sim_results(results_output_dir, sim_config, nuclide_database, get_field
         pvd_name=f"{sim_config.project_name}.pvd",
         field_names=qoi_results.keys(),
         get_field_component_index=get_field_component_index,
-        sort_data=True,   # sort by depth in z direction
+        sort_data=True,  # sort by depth in z direction
         sort_by_index=sort_by_index,
     )
 
     for QoI in qoi_results.keys():
         for space_time_val in field_results[QoI]:
-            key = tuple(space_time_val[c] for i, c in enumerate(("x", "y", "z")) if i in get_field_component_index) + (space_time_val["t"],)
+            key = tuple(
+                space_time_val[c]
+                for i, c in enumerate(("x", "y", "z"))
+                if i in get_field_component_index
+            ) + (space_time_val["t"],)
             qoi_results[QoI].setdefault(key, []).append(space_time_val["val"])
 
     return qoi_results
+
 
 def sort_results(results: dict, get_field_component_index, sort_by_index: int) -> dict:
     """
@@ -251,6 +266,7 @@ def sort_results(results: dict, get_field_component_index, sort_by_index: int) -
         qoi_name: {k: qoi_dict[k] for k in sorted(qoi_dict.keys(), key=sort_key)}
         for qoi_name, qoi_dict in results.items()
     }
+
 
 def save_dict_to_group(group: h5py.Group, d: dict) -> None:
     """Recursively write a nested {key: array} dict as HDF5 groups/datasets."""
@@ -275,8 +291,11 @@ def save_results_to_group(results: dict, parent: h5py.Group) -> None:
         n_samples = next(len(vals) for vals in qoi_dict.values() if vals is not None)
 
         sample_val = next(
-            v for vals in qoi_dict.values() if vals is not None
-            for v in vals if v is not None
+            v
+            for vals in qoi_dict.values()
+            if vals is not None
+            for v in vals
+            if v is not None
         )
         is_vector = isinstance(sample_val, (list, tuple, np.ndarray))
 
@@ -295,14 +314,21 @@ def save_results_to_group(results: dict, parent: h5py.Group) -> None:
                     if v is not None:
                         data[i, j, :] = np.asarray(v, dtype=np.float64)
 
-        grp.create_dataset("values", data=data, compression="gzip", compression_opts=4, shuffle=True)
+        grp.create_dataset(
+            "values", data=data, compression="gzip", compression_opts=4, shuffle=True
+        )
         grp.attrs["n_keys"] = n_keys
         grp.attrs["n_samples"] = n_samples
         grp.attrs["n_key_dims"] = key_arr.shape[1]
         grp.attrs["is_vector"] = bool(is_vector)
 
 
-def save_results_to_hdf5(all_run_results: dict, h5_path: str, sampled_data: dict | None = None, save_sampled_data: bool = False) -> None:
+def save_results_to_hdf5(
+    all_run_results: dict,
+    h5_path: str,
+    sampled_data: dict | None = None,
+    save_sampled_data: bool = False,
+) -> None:
     """Write sampled input parameters and simulation results into ONE HDF5 file."""
     with h5py.File(h5_path, "w") as f:
         if save_sampled_data and sampled_data is not None:
@@ -316,6 +342,7 @@ def load_results_from_hdf5(h5_path: str) -> dict:
     """
     Load results saved by save_results_to_hdf5.
     """
+
     def read_group(group):
         """Recursively read an HDF5 group into a nested dict of arrays."""
         data = {}
@@ -346,7 +373,9 @@ def load_results_from_hdf5(h5_path: str) -> dict:
             qoi_dict = {}
             for i, k in enumerate(keys):
                 if not is_vector:
-                    qoi_dict[k] = [None if np.isnan(v) else float(v) for v in data[i, :]]
+                    qoi_dict[k] = [
+                        None if np.isnan(v) else float(v) for v in data[i, :]
+                    ]
                 else:
                     qoi_dict[k] = [
                         None if np.all(np.isnan(data[i, j])) else data[i, j].tolist()
@@ -357,3 +386,80 @@ def load_results_from_hdf5(h5_path: str) -> dict:
         loaded["simulation_results"] = results
 
     return loaded
+
+
+def ensemble_profile_at_time(
+    nuclide_results: dict,
+    target_time_s: float,
+    source_loc: float = 0.0,
+    common_grid_points: int = 200,
+) -> tuple:
+    """Build an ensemble mean/min/max distance profile at one output time.
+    Used when the rock unit's thickness is itself an uncertain parameter),
+    samples do not share a common set of node distances.
+
+    Args:
+        nuclide_results (dict): `{(z, t): [value, ...]}` for one QoI, one
+            value per ensemble sample (`None` where a sample has no node
+            at that `z`), as returned under `results["simulation_results"][qoi_name]`
+            by `load_results_from_hdf5`.
+        target_time_s (float): Desired simulation time, in seconds; the
+            closest available output time is used.
+        source_loc (float): Source location, in meters, used to convert
+            node coordinates `z` into distance from the source.
+        common_grid_points (int): Number of points on the shared distance
+            grid the ensemble statistics are computed on.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, int]: The
+        common distance grid, and the per-point ensemble mean, min, and
+        max concentration on it, followed by the actual output time used
+        (in seconds) and the ensemble size.
+    """
+    available_times = sorted({t for (_, t) in nuclide_results})
+    actual_time_s = min(available_times, key=lambda t: abs(t - target_time_s))
+
+    # groups each sample's own (non-`None`) entries back into its own distance-sorted profile
+    n_samples = len(next(iter(nuclide_results.values())))
+    # create one profile per sample: profiles[i] holds sample ith full set of (distance, concentration) pairs at the chosen time
+    profiles = [[] for _ in range(n_samples)]
+    for (z, t), values in nuclide_results.items():
+        # skips anything not at the target time
+        if t != actual_time_s:
+            continue
+        # converts node position z into distance from the source
+        distance = abs(z - source_loc)
+        # for each sample's value at that node, if it's not None
+        for sample_index, value in enumerate(values):
+            if value is not None:
+                profiles[sample_index].append((distance, value))
+
+    # extract data: each sample now has its own (distances_by_sample[i], concentrations_by_sample[i]) profile
+    distances_by_sample = []
+    concentrations_by_sample = []
+    for profile in profiles:
+        profile.sort(key=lambda pair: pair[0])
+        distances_by_sample.append(np.array([d for d, _ in profile]))
+        concentrations_by_sample.append(np.array([c for _, c in profile]))
+
+    common_max_distance = min(distances.max() for distances in distances_by_sample)
+    common_grid = np.linspace(0.0, common_max_distance, common_grid_points)
+
+    # interpolates every sample onto one shared distance grid spanning`[0, shortest sample's domain]`
+    on_common_grid = np.array(
+        [
+            np.interp(common_grid, distances, concentrations)
+            for distances, concentrations in zip(
+                distances_by_sample, concentrations_by_sample
+            )
+        ]
+    )
+
+    return (
+        common_grid,
+        on_common_grid.mean(axis=0),
+        on_common_grid.min(axis=0),
+        on_common_grid.max(axis=0),
+        actual_time_s,
+        n_samples,
+    )
