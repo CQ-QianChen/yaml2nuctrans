@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ogstools.ogs6py import Project
+from ogstools.ogs6py.project import Project
 from collections import deque
 import numpy as np
 import radioactivedecay as rd
@@ -68,7 +68,7 @@ def generate_ogsprj(
     output_dir = Path(output_dir)
 
     model = Project(
-        PROJECT_FILE=f"{project_name}.prj",
+        output_file=str(output_dir / f"{project_name}.prj"),
         output_dir=str(output_dir),
     )
 

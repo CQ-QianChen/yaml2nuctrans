@@ -6,8 +6,8 @@ authors:
   - family-names: Chen
     given-names: Qian
     orcid: "https://orcid.org/0000-0001-7103-9330"
-date-released: 2026-08-02
-version: "1.0.0"
+date-released: 2026-10-27
+version: "1.1.0"
 repository-code: "https://github.com/CQ-QianChen/yaml2nuctrans"
 keywords:
   - "radionuclide transport"

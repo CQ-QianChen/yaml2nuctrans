@@ -236,7 +236,7 @@ class CreateMesh1D:
         meshes = ot.Meshes.from_gmsh(
             filename=os.path.join(output_msh_path, "mesh_1d.msh"), dim=1, reindex=True, log=False
         )
-        meshes.save(meshes_path=Path(output_msh_path), overwrite=True)
+        meshes.save(target=Path(output_msh_path), overwrite=True)
         original_dir = os.getcwd()
         os.chdir(output_msh_path)
         domain_vtu = "domain.vtu"

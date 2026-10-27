@@ -1,5 +1,4 @@
 import os
-from ogstools.ogs6py import Project
 from collections import deque
 from pathlib import Path
 import copy

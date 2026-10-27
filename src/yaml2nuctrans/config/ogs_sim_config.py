@@ -87,12 +87,29 @@ class NuclideInitialCondition:
     """Store initial-condition definitions for all nuclides.
 
     Attributes:
-        types (list[str]): Initial-condition type for every nuclide.
-        values (list[float]): Initial-condition value for every nuclide.
+        types (list[str]): Initial-condition type for every nuclide, each
+            "Constant" or "Function".
+        values (list[float | str]): Initial-condition value for every
+            nuclide: a plain number for a "Constant" entry, or an OGS
+            expression string (for example a coordinate-range check
+            localizing a source zone) for a "Function" entry.
     """
 
     types: list[str]
-    values: list[float]
+    values: list[float | str]
+
+    def __post_init__(self):
+        """Validate that every nuclide has one complete definition.
+
+        Raises:
+            ValueError: If the type and value lists do not have the same
+                number of entries.
+        """
+        if len(self.types) != len(self.values):
+            raise ValueError(
+                "Nuclide initial-condition lists must have the same "
+                "number of entries."
+            )
 
 
 @dataclass
@@ -385,6 +402,22 @@ class SimulationConfig:
 
         
         initial_data = data["initial_condition_nuclide"]
+
+        initial_values = []
+        for condition_type, value in zip(
+            initial_data["type"], initial_data["value"], strict=True
+        ):
+            if condition_type == "Constant":
+                initial_values.append(float(value))
+            elif condition_type == "Function":
+                initial_values.append(str(value))
+            else:
+                raise NotImplementedError(
+                    f"Initial-condition type '{condition_type}' is not "
+                    "supported for initial_condition_nuclide; expected "
+                    "'Constant' or 'Function'."
+                )
+
         boundary_data = data["boundary_condition_nuclide"]
         pressure_data = data["pressure_setup"]
         timeloop_data = data["sim_setup"]["timeloop"]
@@ -394,7 +427,9 @@ class SimulationConfig:
         if ("relative_tol" not in process_data):
             process_data_relative_tol = [1e-16]*(number_of_nuclide+1)
         else:
-            process_data_relative_tol = process_data_relative_tol
+            process_data_relative_tol = [
+                float(value) for value in process_data["relative_tol"]
+            ]
 
        
         time_stepping_data = process_data["time_stepping"]
@@ -469,10 +504,7 @@ class SimulationConfig:
             secondary_variables=data["secondary_variables"],
             initial_condition_nuclide=NuclideInitialCondition(
                 types=list(initial_data["type"]),
-                values=[
-                    float(value)
-                    for value in initial_data["value"]
-                ],
+                values=initial_values,
             ),
             boundary_condition_nuclide=NuclideBoundaryCondition(
                 types=list(boundary_data["type"]),
