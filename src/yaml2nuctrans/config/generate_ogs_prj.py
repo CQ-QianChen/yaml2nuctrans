@@ -31,11 +31,11 @@ def generate_ogsprj(
             for mesh-resolution/refinement studies. Defaults to None
             (library defaults).
     """
-    
+
     project_name = sim_config.project_name
 
     phase_properties = PhaseProperties.from_rock_data(
-    rock_data=rock_database,
+        rock_data=rock_database,
     )
 
     medium_properties = MediumProperties.from_rock_data(
@@ -43,8 +43,7 @@ def generate_ogsprj(
     )
 
     nuclide_properties = NuclidePropertiesCollection.from_databases(
-        rock_data=rock_database,
-        nuclide_data=nuclide_database
+        rock_data=rock_database, nuclide_data=nuclide_database
     )
 
     if sim_config.mesh_dimension == 1:
@@ -54,7 +53,7 @@ def generate_ogsprj(
         sim_config=sim_config,
         units=units,
     )
-    
+
     mesh_files = MeshBuilder.build(
         sim_config=sim_config,
         units=units,
@@ -62,16 +61,23 @@ def generate_ogsprj(
         mesh_params=mesh_params,
     )
 
-    python_bc = PythonBoundaryConditionScript.from_config(config=sim_config,output_path=f"{output_dir}/python_DirichletBC.py")
+    # No-op unless initial_condition_nuclide was built from per-nuclide
+    # inventories (source_concentration in the YAML)
+    sim_config.initial_condition_nuclide.fem_source_concentration(
+        source=sim_config.source,
+        mesh=Path(output_dir) / f"{mesh_files.domain}.vtu",
+    )
 
-    
+    python_bc = PythonBoundaryConditionScript.from_config(
+        config=sim_config, output_path=f"{output_dir}/python_DirichletBC.py"
+    )
+
     output_dir = Path(output_dir)
 
     model = Project(
         output_file=str(output_dir / f"{project_name}.prj"),
         output_dir=str(output_dir),
     )
-
 
     _add_meshes(
         model=model,
@@ -87,7 +93,7 @@ def generate_ogsprj(
         model=model,
         meshes=mesh_files,
         sim_config=sim_config,
-        nuclide_database = nuclide_database
+        nuclide_database=nuclide_database,
     )
 
     # ---- add numerical_stabilization ---- #
@@ -104,26 +110,26 @@ def generate_ogsprj(
         medium_properties=medium_properties,
         phase_properties=phase_properties,
         nuclide_properties=nuclide_properties,
-        sim_config=sim_config
+        sim_config=sim_config,
     )
 
     _add_time_loop(
-    model=model,
-    sim_config=sim_config,
+        model=model,
+        sim_config=sim_config,
     )
 
     _add_chemical_system(
         model=model,
         meshes=mesh_files,
         sim_config=sim_config,
-        nuclide_database = nuclide_database
+        nuclide_database=nuclide_database,
     )
 
     _add_initial_and_boundary_conditions(
         model=model,
         meshes=mesh_files,
         sim_config=sim_config,
-        nuclide_database = nuclide_database
+        nuclide_database=nuclide_database,
     )
 
     _add_solvers(
@@ -131,21 +137,17 @@ def generate_ogsprj(
         sim_config=sim_config,
     )
 
-    model.write_input(
-        prjfile_path=str(
-            output_dir
-            / f"{project_name}.prj"
-        )
-    )
+    model.write_input(prjfile_path=str(output_dir / f"{project_name}.prj"))
 
     return model
+
 
 def _add_meshes(
     model,
     meshes,
 ) -> None:
     """Add all required OGS meshes from MeshFiles1D."""
-   
+
     mesh_directory = Path(meshes.file_path)
 
     mesh_names = (
@@ -162,12 +164,13 @@ def _add_meshes(
             filename=str(mesh_path),
         )
 
+
 def _add_python_script(
     model: Project,
     python_bc: PythonBoundaryConditionScript,
 ) -> None:
     """Register the generated or user-provided Python BC script."""
-    
+
     if python_bc.output_path is None:
         return
 
@@ -176,6 +179,7 @@ def _add_python_script(
     model.python_script.set_pyscript(
         filename=str(python_bc_path),
     )
+
 
 def _add_process(
     model,
@@ -186,15 +190,10 @@ def _add_process(
     """Add the ComponentTransport process and its variables."""
 
     advection = sim_config.process_options.advection
-    body_force = " ".join(
-        ["0"] * meshes.dimension
-    )
+    body_force = " ".join(["0"] * meshes.dimension)
 
     if advection:
-        body_force = " ".join(
-            ["0"] * (meshes.dimension - 1)
-            + [f"-{9.80665}"]
-        )
+        body_force = " ".join(["0"] * (meshes.dimension - 1) + [f"-{9.80665}"])
 
     model.processes.set_process(
         name="hc",
@@ -204,26 +203,32 @@ def _add_process(
     )
 
     for process_variable in sim_config.process_variables:
-        if process_variable == 'concentration':
+        if process_variable == "concentration":
             for nuclide in nuclide_database.nuclide_names:
                 model.processes.add_process_variable(
-                                process_variable=process_variable,
-                                process_variable_name=nuclide,
-                            )
+                    process_variable=process_variable,
+                    process_variable_name=nuclide,
+                )
         else:
             model.processes.add_process_variable(
-                    process_variable=process_variable, process_variable_name=process_variable
-                )
-
+                process_variable=process_variable,
+                process_variable_name=process_variable,
+            )
 
     secondary_variables = sim_config.secondary_variables
     if secondary_variables is not None:
         for secondary_variable in secondary_variables:
-            if secondary_variable == 'Flux':
+            if secondary_variable == "Flux":
                 for nuclide in nuclide_database.nuclide_names:
-                    model.processes.add_secondary_variable(internal_name=nuclide+secondary_variable, output_name=nuclide+secondary_variable)
+                    model.processes.add_secondary_variable(
+                        internal_name=nuclide + secondary_variable,
+                        output_name=nuclide + secondary_variable,
+                    )
             else:
-                model.processes.add_secondary_variable(internal_name=secondary_variable, output_name=secondary_variable)
+                model.processes.add_secondary_variable(
+                    internal_name=secondary_variable, output_name=secondary_variable
+                )
+
 
 def _add_media(
     model: Project,
@@ -231,10 +236,9 @@ def _add_media(
     medium_properties: MediumProperties,
     phase_properties: PhaseProperties,
     nuclide_properties: NuclidePropertiesCollection,
-    sim_config: SimulationConfig
+    sim_config: SimulationConfig,
 ) -> None:
     """Add OGS media, phases, and component properties."""
-
 
     for medium_id, rock_name in medium_ids.by_id.items():
         _add_medium_properties(
@@ -256,8 +260,9 @@ def _add_media(
             medium_id=medium_id,
             rock_name=rock_name,
             nuclide_properties=nuclide_properties,
-            sim_config=sim_config
+            sim_config=sim_config,
         )
+
 
 def _add_medium_properties(
     model: Project,
@@ -268,9 +273,7 @@ def _add_medium_properties(
     """Add medium-level properties for one geological unit."""
     medium = medium_properties.get(rock_name)
 
-    for property_name, property_data in (
-        medium.properties.items()
-    ):
+    for property_name, property_data in medium.properties.items():
         _add_ogs_property(
             model=model,
             medium_id=medium_id,
@@ -278,6 +281,7 @@ def _add_medium_properties(
             property_type=property_data.property_type,
             value=property_data.value,
         )
+
 
 def _add_phase_properties(
     model: Project,
@@ -289,9 +293,7 @@ def _add_phase_properties(
     phases = phase_properties.by_rock_name[rock_name]
 
     for phase_type, phase in phases.items():
-        for property_name, property_data in (
-            phase.properties.items()
-        ):
+        for property_name, property_data in phase.properties.items():
             _add_ogs_property(
                 model=model,
                 medium_id=medium_id,
@@ -301,12 +303,13 @@ def _add_phase_properties(
                 value=property_data.value,
             )
 
+
 def _add_nuclide_properties(
     model: Project,
     medium_id: str,
     rock_name: str,
     nuclide_properties: NuclidePropertiesCollection,
-    sim_config: SimulationConfig
+    sim_config: SimulationConfig,
 ) -> None:
     """Add component properties for every phase and nuclide."""
 
@@ -316,21 +319,13 @@ def _add_nuclide_properties(
 
     for phase_type, nuclides in phases.items():
         for nuclide_name, nuclide_data in nuclides.items():
-            for property_name, property_data in (
-                nuclide_data.properties.items()
-            ):
+            for property_name, property_data in nuclide_data.properties.items():
                 value = property_data.value
 
-                if (
-                    property_name == "pore_diffusion"
-                    and not diffusion
-                ):
+                if property_name == "pore_diffusion" and not diffusion:
                     value = 0.0
 
-                if (
-                    property_name == "retardation_factor"
-                    and not sorption
-                ):
+                if property_name == "retardation_factor" and not sorption:
                     value = 1.0
 
                 _add_ogs_property(
@@ -342,6 +337,7 @@ def _add_nuclide_properties(
                     property_type=property_data.property_type,
                     value=value,
                 )
+
 
 def _add_ogs_property(
     model: Project,
@@ -380,9 +376,8 @@ def _add_ogs_property(
         )
         return
 
-    raise NotImplementedError(
-        f"OGS property type '{property_type}' is not supported."
-    )
+    raise NotImplementedError(f"OGS property type '{property_type}' is not supported.")
+
 
 def _add_time_loop(
     model,
@@ -395,9 +390,7 @@ def _add_time_loop(
 
     model.time_loop.add_process(
         process="hc",
-        nonlinear_solver_name=(
-            processes.nonlinear_solver_name
-        ),
+        nonlinear_solver_name=(processes.nonlinear_solver_name),
         convergence_type=processes.convergence_type,
         norm_type=processes.norm_type,
         reltols=" ".join(map(str, processes.relative_tolerances)),
@@ -440,6 +433,7 @@ def _add_time_loop(
         variables=[],
     )
 
+
 def _add_chemical_system(
     model,
     meshes,
@@ -448,27 +442,17 @@ def _add_chemical_system(
 ) -> None:
     """Add radioactive-decay reactions when decay is enabled."""
 
-
     if not sim_config.process_options.decay:
         return
-    
+
     nuclides = nuclide_database.nuclide_names
     number_of_nuclides = len(nuclides)
 
-    nuclide_half_lives = [
-        rd.Nuclide(nuclide).half_life()
-        for nuclide in nuclides
-    ]
+    nuclide_half_lives = [rd.Nuclide(nuclide).half_life() for nuclide in nuclides]
 
-    decay_rates = (
-        np.log(2)
-        / np.array(nuclide_half_lives)
-    )
+    decay_rates = np.log(2) / np.array(nuclide_half_lives)
 
-    base_coefficients = (
-        ["-1", "1"]
-        + ["0"] * (number_of_nuclides - 2)
-    )
+    base_coefficients = ["-1", "1"] + ["0"] * (number_of_nuclides - 2)
 
     model.add_block(
         blocktag="chemical_system",
@@ -502,9 +486,7 @@ def _add_chemical_system(
 
         model.add_block(
             blocktag="chemical_reaction",
-            parent_xpath=(
-                "./chemical_system/chemical_reactions"
-            ),
+            parent_xpath=("./chemical_system/chemical_reactions"),
             taglist=[
                 "stoichiometric_coefficients",
                 "reaction_type",
@@ -517,30 +499,19 @@ def _add_chemical_system(
             ],
         )
 
+
 def _add_initial_and_boundary_conditions(
-    model,
-    meshes,
-    sim_config,
-    nuclide_database
+    model, meshes, sim_config, nuclide_database
 ) -> None:
     """Add pressure and nuclide initial and boundary conditions."""
-    _add_pressure_conditions(
-        model=model,
-        meshes= meshes,
-        sim_config=sim_config
-    )
+    _add_pressure_conditions(model=model, meshes=meshes, sim_config=sim_config)
 
     _add_nuclide_conditions(
-        model=model,
-        sim_config=sim_config,
-        nuclide_database = nuclide_database
+        model=model, sim_config=sim_config, nuclide_database=nuclide_database
     )
 
-def _add_pressure_conditions(
-    model,
-    meshes,
-    sim_config
-) -> None:
+
+def _add_pressure_conditions(model, meshes, sim_config) -> None:
     """Add pressure initial condition and pressure boundaries."""
     pressure = sim_config.pressure_setup
     advection = sim_config.process_options.advection
@@ -592,11 +563,8 @@ def _add_pressure_conditions(
         parameter="p_bottom",
     )
 
-def _add_nuclide_conditions(
-    model,
-    sim_config,
-    nuclide_database
-) -> None:
+
+def _add_nuclide_conditions(model, sim_config, nuclide_database) -> None:
     """Add initial and boundary conditions for all nuclides."""
     initial = sim_config.initial_condition_nuclide
     boundary = sim_config.boundary_condition_nuclide
@@ -642,6 +610,7 @@ def _add_nuclide_conditions(
             boundary_value=boundary_value,
         )
 
+
 def _add_nuclide_boundary_condition(
     model,
     nuclide: str,
@@ -685,9 +654,9 @@ def _add_nuclide_boundary_condition(
         return
 
     raise NotImplementedError(
-        f"Boundary condition type '{boundary_type}' "
-        "is not supported."
+        f"Boundary condition type '{boundary_type}' " "is not supported."
     )
+
 
 def _add_parameter(
     model,
@@ -712,9 +681,8 @@ def _add_parameter(
         )
         return
 
-    raise NotImplementedError(
-        f"Parameter type '{property_type}' is not supported."
-    )
+    raise NotImplementedError(f"Parameter type '{property_type}' is not supported.")
+
 
 def _add_solvers(
     model,

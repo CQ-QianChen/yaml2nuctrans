@@ -3,10 +3,10 @@ from pathlib import Path
 
 import yaml
 
-
 Coordinate1D = float
 Coordinate2D = tuple[float, float]
 Coordinate3D = tuple[float, float, float]
+
 
 @dataclass
 class PointSource1D:
@@ -18,6 +18,7 @@ class PointSource1D:
 
     source_type: str
     loc: Coordinate1D
+
 
 @dataclass
 class LineSource1D:
@@ -33,6 +34,7 @@ class LineSource1D:
     start_loc: Coordinate1D
     end_loc: Coordinate1D
 
+
 @dataclass
 class PointSource2D:
     loc: Coordinate2D
@@ -47,6 +49,7 @@ class LineSource2D:
 @dataclass
 class SurfaceSource2D:
     """A 2D source region represented by polygon vertices."""
+
     vertices: list[Coordinate2D]
 
 
@@ -64,15 +67,17 @@ class LineSource3D:
 @dataclass
 class SurfaceSource3D:
     """A 3D surface represented by three or more vertices."""
+
     vertices: list[Coordinate3D]
 
 
 @dataclass
 class VolumeSource3D:
     """A 3D volume, initially represented as an axis-aligned box."""
+
     min_corner: Coordinate3D
     max_corner: Coordinate3D
-    
+
 
 @dataclass
 class Meshes:
@@ -81,6 +86,25 @@ class Meshes:
     top: str
     bottom: str
     reactive_domain: str
+
+
+@dataclass
+class SourceConcentrationSpec:
+    """Store per-nuclide inventories for a repository source, to be
+    resolved into FEM initial-condition values.
+
+    Attributes:
+        inventory_mol (list[float]): Per-nuclide inventory in moles,
+            parent first, matching `NuclideData.nuclide_names` order.
+        porosity (float): Porosity of the source zone.
+        area_repository (float): Cross-sectional area represented by the
+            1-D model, in m**2.
+    """
+
+    inventory_mol: list[float]
+    porosity: float
+    area_repository: float
+
 
 @dataclass
 class NuclideInitialCondition:
@@ -91,25 +115,47 @@ class NuclideInitialCondition:
             "Constant" or "Function".
         values (list[float | str]): Initial-condition value for every
             nuclide: a plain number for a "Constant" entry, or an OGS
-            expression string (for example a coordinate-range check
-            localizing a source zone) for a "Function" entry.
+            expression string for a "Function" entry.
+        source_concentration (SourceConcentrationSpec | None): Per-nuclide
+            inventories to derive `types`/`values` from, via
+            `fem_source_concentration`. `None` if `types`/`values` were given directly instead.
     """
 
     types: list[str]
     values: list[float | str]
+    source_concentration: SourceConcentrationSpec | None = None
 
-    def __post_init__(self):
-        """Validate that every nuclide has one complete definition.
+    def fem_source_concentration(self, source, mesh):
+        """Resolve `types`/`values` from `source_concentration`.
 
-        Raises:
-            ValueError: If the type and value lists do not have the same
-                number of entries.
+        Args:
+            source (PointSource1D | LineSource1D): Source geometry.
+            mesh (str | pathlib.Path | pyvista.DataSet): The domain mesh,
+                used to read the node spacing around the source zone.
         """
-        if len(self.types) != len(self.values):
-            raise ValueError(
-                "Nuclide initial-condition lists must have the same "
-                "number of entries."
+        if self.source_concentration is None:
+            return
+
+        # Imported locally to avoid a circular import
+        from yaml2nuctrans.ogs_parameters.source_concentration import (
+            build_source_concentration_ic,
+        )
+
+        types = []
+        values = []
+        for inventory_mol in self.source_concentration.inventory_mol:
+            resolved = build_source_concentration_ic(
+                mesh=mesh,
+                source=source,
+                inventory_mol=inventory_mol,
+                porosity=self.source_concentration.porosity,
+                area_repository=self.source_concentration.area_repository,
             )
+            types.append(resolved["type"])
+            values.append(resolved["value"])
+
+        self.types = types
+        self.values = values
 
 
 @dataclass
@@ -127,24 +173,6 @@ class NuclideBoundaryCondition:
     types: list[str]
     meshes: list[str]
     values: list[str]
-
-    def __post_init__(self):
-        """Validate that every nuclide has one complete definition.
-
-        Raises:
-            ValueError: If condition lists do not have equal lengths.
-        """
-        lengths = {
-            len(self.types),
-            len(self.meshes),
-            len(self.values),
-        }
-
-        if len(lengths) != 1:
-            raise ValueError(
-                "Nuclide boundary-condition lists must have the same "
-                "number of entries."
-            )
 
 
 @dataclass
@@ -217,6 +245,7 @@ class FixedTimeStepping:
     time_steps: list[float]
     repeats: list[int]
 
+
 @dataclass
 class IterationNumberBasedTimeStepping:
     """Store iteration-number-based time-stepping configuration.
@@ -240,6 +269,7 @@ class IterationNumberBasedTimeStepping:
     maximum_dt: int
     number_iterations: list[int]
     multiplier: list[float]
+
 
 @dataclass
 class OutputSettings:
@@ -308,6 +338,7 @@ class TimeLoop:
     time_stepping: FixedTimeStepping
     output: OutputSettings
 
+
 @dataclass
 class SimSetUp:
     """Store all time-loop, process, solver, and output settings.
@@ -321,6 +352,7 @@ class SimSetUp:
     timeloop: TimeLoop
     non_linear_solver: NonLinearSolver
     linear_solvers: LinearSolver
+
 
 @dataclass
 class SimulationConfig:
@@ -345,6 +377,7 @@ class SimulationConfig:
         process_options (ProcessCoupling): Enabled mechanisms.
         sim_setup (SimSetUp): Simulation setup configuration.
     """
+
     project_name: str
     create_python_bc: bool
     python_bc_source_value: float
@@ -360,7 +393,7 @@ class SimulationConfig:
     pressure_setup: PressureSetup
     process_options: ProcessCoupling
     sim_setup: SimSetUp
-    
+
     @classmethod
     def from_yaml(cls, filename):
         """Create simulation configuration from a YAML file.
@@ -385,126 +418,139 @@ class SimulationConfig:
         with filename.open(encoding="utf-8") as file:
             data = yaml.safe_load(file)
 
-
         source_data = data["source"]
         mesh_dimension_from_data = int(data["mesh_dimension"])
 
         if source_data["type"] == "point" and mesh_dimension_from_data == 1:
-            source_from_data = PointSource1D(source_type="point", loc=float(source_data["loc"]))
+            source_from_data = PointSource1D(
+                source_type="point", loc=float(source_data["loc"])
+            )
         if source_data["type"] == "line" and mesh_dimension_from_data == 1:
-            source_from_data = LineSource1D(source_type="line", start_loc=float(source_data["start_loc"]),end_loc=float(source_data["end_loc"]))
+            source_from_data = LineSource1D(
+                source_type="line",
+                start_loc=float(source_data["start_loc"]),
+                end_loc=float(source_data["end_loc"]),
+            )
 
         if ("mesh_names" not in data) and mesh_dimension_from_data == 1:
-            meshes_from_data = Meshes(dimension=3, domain="domain",top="point_top", bottom="point_bottom", reactive_domain="reactive_domain")
+            meshes_from_data = Meshes(
+                dimension=3,
+                domain="domain",
+                top="point_top",
+                bottom="point_bottom",
+                reactive_domain="reactive_domain",
+            )
         if ("mesh_names" in data) and mesh_dimension_from_data == 1:
             mesh_data = data["mesh_names"]
-            meshes_from_data = Meshes(dimension=3, domain=mesh_data["domain"],top=mesh_data["top"], bottom=mesh_data["bottom["], reactive_domain=mesh_data["reactive_domain"])
+            meshes_from_data = Meshes(
+                dimension=3,
+                domain=mesh_data["domain"],
+                top=mesh_data["top"],
+                bottom=mesh_data["bottom["],
+                reactive_domain=mesh_data["reactive_domain"],
+            )
 
-        
         initial_data = data["initial_condition_nuclide"]
 
-        initial_values = []
-        for condition_type, value in zip(
-            initial_data["type"], initial_data["value"], strict=True
-        ):
-            if condition_type == "Constant":
-                initial_values.append(float(value))
-            elif condition_type == "Function":
-                initial_values.append(str(value))
-            else:
-                raise NotImplementedError(
-                    f"Initial-condition type '{condition_type}' is not "
-                    "supported for initial_condition_nuclide; expected "
-                    "'Constant' or 'Function'."
-                )
+        if "source_concentration" in initial_data:
+            source_concentration_data = initial_data["source_concentration"]
+            source_concentration_spec = SourceConcentrationSpec(
+                inventory_mol=[
+                    float(value) for value in source_concentration_data["inventory_mol"]
+                ],
+                porosity=float(source_concentration_data["porosity"]),
+                area_repository=float(source_concentration_data["area_repository"]),
+            )
+            initial_types = []
+            initial_values = []
+        else:
+            source_concentration_spec = None
+            initial_types = list(initial_data["type"])
+            initial_values = []
+            for condition_type, value in zip(
+                initial_data["type"], initial_data["value"], strict=True
+            ):
+                if condition_type == "Constant":
+                    initial_values.append(float(value))
+                elif condition_type == "Function":
+                    initial_values.append(str(value))
+                else:
+                    raise NotImplementedError(
+                        f"Initial-condition type '{condition_type}' is not "
+                        "supported for initial_condition_nuclide; expected "
+                        "'Constant' or 'Function'."
+                    )
 
         boundary_data = data["boundary_condition_nuclide"]
         pressure_data = data["pressure_setup"]
         timeloop_data = data["sim_setup"]["timeloop"]
         process_data = timeloop_data["processes"]
 
-        number_of_nuclide = len(initial_data["value"])
-        if ("relative_tol" not in process_data):
-            process_data_relative_tol = [1e-16]*(number_of_nuclide+1)
+        number_of_nuclide = (
+            len(source_concentration_spec.inventory_mol)
+            if source_concentration_spec is not None
+            else len(initial_values)
+        )
+        if "relative_tol" not in process_data:
+            process_data_relative_tol = [1e-16] * (number_of_nuclide + 1)
         else:
             process_data_relative_tol = [
                 float(value) for value in process_data["relative_tol"]
             ]
 
-       
         time_stepping_data = process_data["time_stepping"]
 
         if time_stepping_data["type"] == "FixedTimeStepping":
             time_stepping_data_resolved = FixedTimeStepping(
-                    time_stepping_type=time_stepping_data["type"],
-                    t_initial=float(
-                        time_stepping_data["t_initial"]
-                    ),
-                    t_end=float(time_stepping_data["t_end"]),
-                    time_steps=[
-                        float(value)
-                        for value in time_stepping_data["time_step"]
-                    ],
-                    repeats=[
-                        int(value)
-                        for value in time_stepping_data["repeat"]
-                    ],
-                )
+                time_stepping_type=time_stepping_data["type"],
+                t_initial=float(time_stepping_data["t_initial"]),
+                t_end=float(time_stepping_data["t_end"]),
+                time_steps=[float(value) for value in time_stepping_data["time_step"]],
+                repeats=[int(value) for value in time_stepping_data["repeat"]],
+            )
         if time_stepping_data["type"] == "IterationNumberBasedTimeStepping":
             time_stepping_data_resolved = IterationNumberBasedTimeStepping(
-                    time_stepping_type=time_stepping_data["type"],
-                    t_initial=float(
-                        time_stepping_data["t_initial"]
-                    ),
-                    t_end=float(time_stepping_data["t_end"]),
-                    initial_dt=int(
-                        time_stepping_data["initial_dt"]
-                    ),
-                    minimum_dt=int(
-                        time_stepping_data["minimum_dt"]
-                    ),
-                    maximum_dt=int(
-                        time_stepping_data["maximum_dt"]
-                    ),
-                    number_iterations=[
-                        int(value)
-                        for value in time_stepping_data["number_iterations"]
-                    ],
-                    multiplier=[
-                        float(value)
-                        for value in time_stepping_data["multiplier"]
-                    ],
-                )
-
+                time_stepping_type=time_stepping_data["type"],
+                t_initial=float(time_stepping_data["t_initial"]),
+                t_end=float(time_stepping_data["t_end"]),
+                initial_dt=int(time_stepping_data["initial_dt"]),
+                minimum_dt=int(time_stepping_data["minimum_dt"]),
+                maximum_dt=int(time_stepping_data["maximum_dt"]),
+                number_iterations=[
+                    int(value) for value in time_stepping_data["number_iterations"]
+                ],
+                multiplier=[float(value) for value in time_stepping_data["multiplier"]],
+            )
 
         output_data = timeloop_data["output"]
         nonlinear_data = data["sim_setup"]["non_linear_solver"]
         linear_data = data["sim_setup"]["linear_solver"]
 
         linear_solvers = LinearSolver(
-                            name=linear_data["name"],
-                            kind=linear_data["kind"],
-                            prefix=linear_data["prefix"],
-                            solver_type=linear_data["solver_type"],
-                            precon_type=linear_data["precon_type"],
-                            max_iteration_step=linear_data["max_iteration_step"],
-                            error_tolerance=linear_data["error_tolerance"]
-                            )
+            name=linear_data["name"],
+            kind=linear_data["kind"],
+            prefix=linear_data["prefix"],
+            solver_type=linear_data["solver_type"],
+            precon_type=linear_data["precon_type"],
+            max_iteration_step=linear_data["max_iteration_step"],
+            error_tolerance=linear_data["error_tolerance"],
+        )
 
         return cls(
             project_name=str(data["project_name"]),
             create_python_bc=bool(data["create_python_bc"]),
             python_bc_source_value=float(data["python_bc_source_value"]),
             create_meshes=bool(data["create_meshes"]),
-            mesh_dimension = mesh_dimension_from_data,
-            meshes = meshes_from_data,
-            quantity_of_interests = data["quantity_of_interests"],
+            mesh_dimension=mesh_dimension_from_data,
+            meshes=meshes_from_data,
+            quantity_of_interests=data["quantity_of_interests"],
             source=source_from_data,
             process_variables=list(data["process_variables"]),
             secondary_variables=data["secondary_variables"],
             initial_condition_nuclide=NuclideInitialCondition(
-                types=list(initial_data["type"]),
+                types=initial_types,
                 values=initial_values,
+                source_concentration=source_concentration_spec,
             ),
             boundary_condition_nuclide=NuclideBoundaryCondition(
                 types=list(boundary_data["type"]),
@@ -512,15 +558,9 @@ class SimulationConfig:
                 values=list(boundary_data["value"]),
             ),
             pressure_setup=PressureSetup(
-                pressure_initial=float(
-                    pressure_data["pressure_initial"]
-                ),
-                pressure_top=float(
-                    pressure_data["pressure_top"]
-                ),
-                pressure_bottom=float(
-                    pressure_data["pressure_bottom"]
-                ),
+                pressure_initial=float(pressure_data["pressure_initial"]),
+                pressure_top=float(pressure_data["pressure_top"]),
+                pressure_bottom=float(pressure_data["pressure_bottom"]),
             ),
             process_options=ProcessCoupling(
                 decay=bool(data["decay"]),
@@ -531,34 +571,24 @@ class SimulationConfig:
             sim_setup=SimSetUp(
                 timeloop=TimeLoop(
                     processes=ProcessSettings(
-                        nonlinear_solver_name=process_data[
-                            "nonlinear_solver_name"
-                        ],
-                    convergence_type=process_data[
-                        "convergence_type"
-                    ],
-                    norm_type=process_data["norm_type"],
-                    relative_tolerances=process_data_relative_tol,
-                    time_discretization=process_data[
-                        "time_discretization"
-                    ],
+                        nonlinear_solver_name=process_data["nonlinear_solver_name"],
+                        convergence_type=process_data["convergence_type"],
+                        norm_type=process_data["norm_type"],
+                        relative_tolerances=process_data_relative_tol,
+                        time_discretization=process_data["time_discretization"],
+                    ),
+                    time_stepping=time_stepping_data_resolved,
+                    output=OutputSettings(
+                        repeats=[int(value) for value in output_data["repeat"]],
+                        each_steps=[int(value) for value in output_data["each_steps"]],
+                    ),
                 ),
-                time_stepping=time_stepping_data_resolved,
-                output=OutputSettings(
-                    repeats=[
-                        int(value)
-                        for value in output_data["repeat"]
-                    ],
-                    each_steps=[
-                        int(value)
-                        for value in output_data["each_steps"]
-                    ],
-                )),
                 non_linear_solver=NonLinearSolver(
                     name=nonlinear_data["name"],
                     solver_type=nonlinear_data["type"],
                     max_iter=int(nonlinear_data["max_iter"]),
                     linear_solver=nonlinear_data["linear_solver"],
                 ),
-                linear_solvers=linear_solvers)
+                linear_solvers=linear_solvers,
+            ),
         )
