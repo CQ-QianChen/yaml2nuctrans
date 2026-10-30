@@ -9,10 +9,91 @@ import sys
 from yaml2nuctrans.primary_parameters.rock_database import RockData
 from yaml2nuctrans.primary_parameters.nuclide_database import NuclideData
 from yaml2nuctrans.config.ogs_sim_config import SimulationConfig
-from yaml2nuctrans.primary_parameters.geometry import GeometryData
-from yaml2nuctrans.read_results.read_ogs_model_results import read_vtu_field, read_sim_results, build_result_template, merge_sample_results, save_results_to_hdf5, sort_results
+from yaml2nuctrans.primary_parameters.geometry import GeometryData, Units1D
+from yaml2nuctrans.ogs_parameters.medium_ids import MediumIds
+from yaml2nuctrans.ogs_parameters.medium_properties import MediumProperties
+from yaml2nuctrans.read_results.read_ogs_model_results import (
+    read_vtu_field,
+    read_sim_results,
+    build_result_template,
+    merge_sample_results,
+    save_results_to_hdf5,
+    sort_results,
+    ALL_DISCHARGE_QOIS,
+)
+from yaml2nuctrans.post_processing.repository_discharge import (
+    compute_zone_substance_amounts,
+    compute_ewg_discharge,
+    ewg_zones_from_host_rock,
+    DOMAIN_ZONE,
+    HOST_ROCK_ZONE,
+)
 from yaml2nuctrans.config.generate_ogs_prj import generate_ogsprj
-from yaml2nuctrans.sampling.apply_sampled_data import count_samples, load_sampled_data, apply_sample
+from yaml2nuctrans.sampling.apply_sampled_data import (
+    count_samples,
+    load_sampled_data,
+    apply_sample,
+)
+
+
+def _compute_discharge_results(
+    sample_output_dir, sim_config, rock_database, geometry_database, nuclide_database
+) -> dict:
+    """Compute the ewg-discharge QoIs, if any were requested.
+
+    Returns:
+        dict: `{}` if `quantity_of_interests` requests none of
+        "discharged", "frac_discharged", "release_rate",
+        "total_discharged", "total_frac_discharged",
+        "total_release_rate"; otherwise the QoI dict to merge into
+        `qoi_results`/`results`.
+    """
+    requested_qois = set(sim_config.quantity_of_interests)
+    requested_discharge_qois = requested_qois & ALL_DISCHARGE_QOIS
+    if not requested_discharge_qois:
+        return {}
+
+    if sim_config.repository_discharge is None:
+        raise ValueError(
+            "quantity_of_interests requests an ewg-discharge QoI "
+            f"({sorted(requested_discharge_qois)}) "
+        )
+
+    source_concentration = sim_config.initial_condition_nuclide.source_concentration
+    if source_concentration is None:
+        raise ValueError(
+            "`initial_condition_nuclide.source_concentration` (which "
+            "carries `area_repository`) is not set in the YAML config."
+        )
+
+    units = Units1D.from_geometry_data(geometry_database)
+    medium_ids = MediumIds.create_ids(sim_config=sim_config, units=units)
+    medium_properties = MediumProperties.from_rock_data(rock_data=rock_database)
+    porosity_by_material_id = {
+        int(medium_id): medium_properties.get(rock_name).porosity.value
+        for medium_id, rock_name in medium_ids.by_id.items()
+    }
+
+    domain_mesh, zones = ewg_zones_from_host_rock(
+        domain_mesh=Path(sample_output_dir) / f"{sim_config.meshes.domain}.vtu",
+        host_rock=sim_config.repository_discharge.host_rock,
+        medium_ids=medium_ids,
+    )
+    substance_amounts = compute_zone_substance_amounts(
+        result_pvd_path=Path(sample_output_dir) / f"{sim_config.project_name}.pvd",
+        domain_mesh=domain_mesh,
+        nuclide_names=nuclide_database.nuclide_names,
+        porosity_by_material_id=porosity_by_material_id,
+        area_repository=source_concentration.area_repository,
+        zones=zones,
+    )
+
+    return compute_ewg_discharge(
+        substance_amounts,
+        domain_zone=DOMAIN_ZONE,
+        host_rock_zone=HOST_ROCK_ZONE,
+        fields=tuple(requested_discharge_qois),
+    )
 
 
 def _run_single_sample_worker(
@@ -70,7 +151,9 @@ def _run_single_sample_worker(
         nuclide_database=nuclide_database,
         sim_config=sim_config,
     )
-    model_for_run.run_model(logfile=Path(sample_output_dir)/'out.log' ,write_logs=True)
+    model_for_run.run_model(
+        logfile=Path(sample_output_dir) / "out.log", write_logs=True
+    )
 
     # read QoI results for this sample
     qoi_results = read_sim_results(
@@ -79,6 +162,15 @@ def _run_single_sample_worker(
         nuclide_database,
         get_field_component_index,
         sort_by_index,
+    )
+    qoi_results.update(
+        _compute_discharge_results(
+            sample_output_dir,
+            sim_config,
+            rock_database,
+            geometry_database,
+            nuclide_database,
+        )
     )
 
     # delete the sample's output folder
@@ -101,11 +193,11 @@ def ogs_model(
     sampled_data_file_path=None,
     get_field_component_index=[0, 1, 2],
     sort_by_index=2,
-    run_mode = 'ensemble',
+    run_mode="ensemble",
     parallel=True,
     n_jobs=-1,
     keep_vtu=False,
-    **kwargs
+    **kwargs,
 ):
 
     # load input data for single-run mode
@@ -135,10 +227,22 @@ def ogs_model(
             nuclide_database=nuclide_database,
             sim_config=sim_config,
         )
-        model_for_run.run_model(logfile=Path(output_dir)/'out.log' ,write_logs=True)
+        model_for_run.run_model(logfile=Path(output_dir) / "out.log", write_logs=True)
         results = read_sim_results(
-            output_dir, sim_config, nuclide_database,
-            get_field_component_index, sort_by_index,
+            output_dir,
+            sim_config,
+            nuclide_database,
+            get_field_component_index,
+            sort_by_index,
+        )
+        results.update(
+            _compute_discharge_results(
+                output_dir,
+                sim_config,
+                rock_database,
+                geometry_database,
+                nuclide_database,
+            )
         )
         if not keep_vtu:
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -154,7 +258,7 @@ def ogs_model(
 
         if parallel:
             # parallel ensemble run
-            results_gen = Parallel(n_jobs=n_jobs, return_as="generator")( 
+            results_gen = Parallel(n_jobs=n_jobs, return_as="generator")(
                 delayed(_run_single_sample_worker)(
                     i,
                     output_directory,
@@ -183,10 +287,8 @@ def ogs_model(
                 )
 
         else:
-            # sequential ensemble run 
-            for i in tqdm(
-                range(n_samples), desc="OGS samples", unit="sample"
-            ):
+            # sequential ensemble run
+            for i in tqdm(range(n_samples), desc="OGS samples", unit="sample"):
                 apply_sample(
                     i=i,
                     uncertain_parameters=uncertain_parameters,
@@ -204,7 +306,9 @@ def ogs_model(
                     nuclide_database=nuclide_database,
                     sim_config=sim_config,
                 )
-                model_for_run.run_model(logfile=Path(sample_output_dir)/'out.log' ,write_logs=True)
+                model_for_run.run_model(
+                    logfile=Path(sample_output_dir) / "out.log", write_logs=True
+                )
 
                 qoi_results = read_sim_results(
                     sample_output_dir,
@@ -212,6 +316,15 @@ def ogs_model(
                     nuclide_database,
                     get_field_component_index,
                     sort_by_index,
+                )
+                qoi_results.update(
+                    _compute_discharge_results(
+                        sample_output_dir,
+                        sim_config,
+                        rock_database,
+                        geometry_database,
+                        nuclide_database,
+                    )
                 )
                 all_run_results = merge_sample_results(
                     all_run_results, qoi_results, sample_index=i
@@ -231,50 +344,104 @@ def ogs_model(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run OGS model (single or ensemble) from YAML/folder inputs.", formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description="Run OGS model (single or ensemble) from YAML/folder inputs.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    parser.add_argument("--output_directory", required=True,
-                        help="Directory where model outputs are written.")
-    parser.add_argument("--rock_data_folder_path", required=True,
-                        help="Folder with rock property data.")
-    parser.add_argument("--site_folder_path", required=True,
-                        help="Folder with site-specific data.")
-    parser.add_argument("--geometry_folder_path", required=True,
-                        help="Folder with geometry data (rock interfaces etc.).")
-    parser.add_argument("--emitted_energy_folder_path", required=True,
-                        help="Folder with nuclide emitted energy data.")
-    parser.add_argument("--species_type_folder_path", required=True,
-                        help="Folder with nuclide species type data.")
-    parser.add_argument("--sorption_data_folder_path", required=True,
-                        help="Folder with nuclide sorption coefficient data.")
-    parser.add_argument("--nuclide_water_diffusivity_folder_path", required=True,
-                        help="Folder with nuclide water diffusivity data.")
-    parser.add_argument("--model_config_path", required=True,
-                        help="Path to the YAML simulation config file.")
+    parser.add_argument(
+        "--output_directory",
+        required=True,
+        help="Directory where model outputs are written.",
+    )
+    parser.add_argument(
+        "--rock_data_folder_path", required=True, help="Folder with rock property data."
+    )
+    parser.add_argument(
+        "--site_folder_path", required=True, help="Folder with site-specific data."
+    )
+    parser.add_argument(
+        "--geometry_folder_path",
+        required=True,
+        help="Folder with geometry data (rock interfaces etc.).",
+    )
+    parser.add_argument(
+        "--emitted_energy_folder_path",
+        required=True,
+        help="Folder with nuclide emitted energy data.",
+    )
+    parser.add_argument(
+        "--species_type_folder_path",
+        required=True,
+        help="Folder with nuclide species type data.",
+    )
+    parser.add_argument(
+        "--sorption_data_folder_path",
+        required=True,
+        help="Folder with nuclide sorption coefficient data.",
+    )
+    parser.add_argument(
+        "--nuclide_water_diffusivity_folder_path",
+        required=True,
+        help="Folder with nuclide water diffusivity data.",
+    )
+    parser.add_argument(
+        "--model_config_path",
+        required=True,
+        help="Path to the YAML simulation config file.",
+    )
 
-    parser.add_argument("--sampled_data_file_path", default=None,
-                        help="HDF5 file with sampled uncertain parameters (required for ensemble mode).")
-    parser.add_argument("--get_field_component_index", default='[0, 1, 2]',
-                        help="Which vector components of the fields to extract (e.g. [2] or [0, 2] or [0, 1, 2].")
-    parser.add_argument("--sort_by_index", type=int, default=2,
-                        help="Coordinate index used to sort the results (0=x, 1=y, 2=z).")
-    parser.add_argument("--run_mode", default='ensemble',
-                        help="Run mode: 'single' for single best estimate, 'ensemble' for ensemble run with sampled parameters.")
-    parser.add_argument("--parallel", default='True',
-                        help="Run ensemble samples in parallel using joblib.")
-    parser.add_argument("--n_jobs", type=int, default=-1,
-                        help="Number of parallel worker processes (-1 = all CPUs). Only used with --parallel.")
-    parser.add_argument("--keep_vtu", default="False",
-                        help="Keep per-sample output folders (VTU/PVD files) after reading results. "
-                             "By default they are deleted once results are written into Python dictionary.")
-    parser.add_argument("--path_to_save_results_hdf5_file", default=None,
-                        help="Path to save the results dictionary to a HDF5 file.")
-    parser.add_argument("--save_sampled_data", default="True",
-                        help="Whether to save the sampled data into the HDF5 results file. "
-                             "By default it is saved together with the simulationresults.")
+    parser.add_argument(
+        "--sampled_data_file_path",
+        default=None,
+        help="HDF5 file with sampled uncertain parameters (required for ensemble mode).",
+    )
+    parser.add_argument(
+        "--get_field_component_index",
+        default="[0, 1, 2]",
+        help="Which vector components of the fields to extract (e.g. [2] or [0, 2] or [0, 1, 2].",
+    )
+    parser.add_argument(
+        "--sort_by_index",
+        type=int,
+        default=2,
+        help="Coordinate index used to sort the results (0=x, 1=y, 2=z).",
+    )
+    parser.add_argument(
+        "--run_mode",
+        default="ensemble",
+        help="Run mode: 'single' for single best estimate, 'ensemble' for ensemble run with sampled parameters.",
+    )
+    parser.add_argument(
+        "--parallel",
+        default="True",
+        help="Run ensemble samples in parallel using joblib.",
+    )
+    parser.add_argument(
+        "--n_jobs",
+        type=int,
+        default=-1,
+        help="Number of parallel worker processes (-1 = all CPUs). Only used with --parallel.",
+    )
+    parser.add_argument(
+        "--keep_vtu",
+        default="False",
+        help="Keep per-sample output folders (VTU/PVD files) after reading results. "
+        "By default they are deleted once results are written into Python dictionary.",
+    )
+    parser.add_argument(
+        "--path_to_save_results_hdf5_file",
+        default=None,
+        help="Path to save the results dictionary to a HDF5 file.",
+    )
+    parser.add_argument(
+        "--save_sampled_data",
+        default="True",
+        help="Whether to save the sampled data into the HDF5 results file. "
+        "By default it is saved together with the simulationresults.",
+    )
 
     return parser.parse_args()
+
 
 def main() -> None:
     args = parse_args()
@@ -295,7 +462,7 @@ def main() -> None:
         run_mode=args.run_mode,
         parallel=eval(args.parallel),
         n_jobs=args.n_jobs,
-        keep_vtu=eval(args.keep_vtu)
+        keep_vtu=eval(args.keep_vtu),
     )
 
     output_dir = Path(args.output_directory)
@@ -305,15 +472,20 @@ def main() -> None:
     # save results into one HDF5 file.
     sampled_data = None
     save_sampled_data = eval(args.save_sampled_data)
-    
 
     if args.run_mode == "ensemble":
         sampled_data_file_path = args.sampled_data_file_path
         if save_sampled_data:
-            save_results_name = output_dir / f"ensemble_results_with_{Path(sampled_data_file_path).stem}.h5"
+            save_results_name = (
+                output_dir
+                / f"ensemble_results_with_{Path(sampled_data_file_path).stem}.h5"
+            )
             sampled_data = load_sampled_data(sampled_data_file_path)
         else:
-            save_results_name = output_dir / f"ensemble_results_using_{Path(sampled_data_file_path).stem}.h5"
+            save_results_name = (
+                output_dir
+                / f"ensemble_results_using_{Path(sampled_data_file_path).stem}.h5"
+            )
     elif args.run_mode == "single":
         save_results_name = output_dir / f"single_best_estimate_results.h5"
     else:
@@ -325,8 +497,14 @@ def main() -> None:
     if (path_to_save_results is not None) and (path_to_save_results != "default"):
         save_results_name = Path(path_to_save_results)
         save_results_name.parent.mkdir(parents=True, exist_ok=True)
-    
-    save_results_to_hdf5(results, save_results_name, sampled_data=sampled_data, save_sampled_data=save_sampled_data)
+
+    save_results_to_hdf5(
+        results,
+        save_results_name,
+        sampled_data=sampled_data,
+        save_sampled_data=save_sampled_data,
+    )
+
 
 if __name__ == "__main__":
     main()

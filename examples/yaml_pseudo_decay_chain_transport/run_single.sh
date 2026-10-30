@@ -18,7 +18,7 @@ python -m yaml2nuctrans.get_model.ogs_model \
     --species_type_folder_path "$DATA_DIR/nuclide_species_data" \
     --sorption_data_folder_path "$DATA_DIR/nuclide_sorption_data" \
     --nuclide_water_diffusivity_folder_path "$DATA_DIR/nuclide_water_diffusivity_data" \
-    --model_config_path "$SCRIPT_DIR/config_point_source.yaml" \
+    --model_config_path "$SCRIPT_DIR/config_line_source.yaml" \
     --get_field_component_index "[2]" \
     --sort_by_index 2 \
     --run_mode single \

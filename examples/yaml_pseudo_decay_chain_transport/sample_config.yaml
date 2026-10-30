@@ -9,7 +9,17 @@ uncertain_parameters:
       - intrinsic_permeability
   nuclide_sorption_data:
     Pseudo_Claystone:
-      - I-129
+      - Cm-247
+      - Am-243
+      - Pu-239
+      - U-235
+      - Pa-231
+      - Ac-227
   nuclide_water_diffusivity_data:
     Pseudo_Claystone:
-      - I-129
+      - Cm-247
+      - Am-243
+      - Pu-239
+      - U-235
+      - Pa-231
+      - Ac-227

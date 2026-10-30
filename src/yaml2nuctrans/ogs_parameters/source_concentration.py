@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,45 @@ from yaml2nuctrans.meshing.mesh_1d import CreateMesh1D
 M3_TO_L = 1000.0  # multiply a volume in m**3 by this to get liters
 
 AXIS_NAMES = {0: "x", 1: "y", 2: "z"}  # OGS expression variable per axis
+
+
+def porosity_at_source(units, source, medium_properties):
+    """Auto-detect a repository source zone's porosity from the
+    geological unit it physically lies in.
+
+    Args:
+        units (Units1D): Geological unit interface elevations.
+        source (PointSource1D | LineSource1D): Source geometry.
+        medium_properties (MediumProperties): Resolved OGS media, keyed
+            by geological unit name.
+
+    Returns:
+        float: Porosity of the unit containing the source.
+
+    Raises:
+        ValueError: If the source zone does not fall entirely within one
+            geological unit.
+    """
+    source_start, source_end = CreateMesh1D.get_source_location(source)
+    vmin, vmax = sorted((source_start, source_end))
+
+    sorted_interfaces = sorted(units.interfaces.items(), key=lambda kv: kv[1])
+    names = [name for name, _ in sorted_interfaces]
+    depths = [depth for _, depth in sorted_interfaces]
+    unit_bounds = {names[i]: (depths[i], depths[i + 1]) for i in range(len(depths) - 1)}
+
+    unit_key = CreateMesh1D.find_unit(vmin=vmin, vmax=vmax, unit_bounds=unit_bounds)
+    if unit_key is None:
+        raise ValueError(
+            f"Source zone [{source_start}, {source_end}] does not fall "
+            "entirely within a single geological unit; cannot "
+            "auto-detect its porosity. Set "
+            "initial_condition_nuclide.source_concentration.porosity "
+            "explicitly instead."
+        )
+
+    rock_name = re.sub(r"_bottom$", "", unit_key)
+    return medium_properties.get(rock_name).porosity.value
 
 
 def compute_source_concentration(

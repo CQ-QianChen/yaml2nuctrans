@@ -12,6 +12,7 @@ from yaml2nuctrans.ogs_parameters.ogs_mesh_builder import MeshBuilder
 from yaml2nuctrans.ogs_parameters.medium_ids import MediumIds
 from yaml2nuctrans.ogs_parameters.phase_properties import PhaseProperties
 from yaml2nuctrans.ogs_parameters.ogs_python_script import PythonBoundaryConditionScript
+from yaml2nuctrans.ogs_parameters.source_concentration import porosity_at_source
 from yaml2nuctrans.primary_parameters.geometry import Units1D
 
 
@@ -60,6 +61,15 @@ def generate_ogsprj(
         output_directory=output_dir,
         mesh_params=mesh_params,
     )
+
+    source_concentration = sim_config.initial_condition_nuclide.source_concentration
+    if source_concentration is not None and source_concentration.porosity is None:
+        # Auto-detect the source zone's porosity from the rock unit
+        source_concentration.porosity = porosity_at_source(
+            units=units,
+            source=sim_config.source,
+            medium_properties=medium_properties,
+        )
 
     # No-op unless initial_condition_nuclide was built from per-nuclide
     # inventories (source_concentration in the YAML)

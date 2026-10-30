@@ -96,14 +96,32 @@ class SourceConcentrationSpec:
     Attributes:
         inventory_mol (list[float]): Per-nuclide inventory in moles,
             parent first, matching `NuclideData.nuclide_names` order.
-        porosity (float): Porosity of the source zone.
         area_repository (float): Cross-sectional area represented by the
             1-D model, in m**2.
+        porosity (float | None): Porosity of the source zone. If `None`,
+            it is auto-detected from `repository_discharge.host_rock`.
     """
 
     inventory_mol: list[float]
-    porosity: float
     area_repository: float
+    porosity: float | None = None
+
+
+@dataclass
+class RepositoryDischarge:
+    """Store repository/ewg discharge post-processing configuration,
+    used to compute the "discharged", "frac_discharged", "release_rate",
+    "total_discharged", "total_frac_discharged", and
+    "total_release_rate" quantities of interest.
+
+    Attributes:
+        host_rock (str | int | list[str | int]): One or more geological
+            unit names and/or OGS medium IDs that make up the
+            containment-providing rock zone (ewg), for example
+            `["Claystone"]` or `[4, 5]`.
+    """
+
+    host_rock: str | int | list[str | int]
 
 
 @dataclass
@@ -376,6 +394,11 @@ class SimulationConfig:
             conditions.
         process_options (ProcessCoupling): Enabled mechanisms.
         sim_setup (SimSetUp): Simulation setup configuration.
+        repository_discharge (RepositoryDischarge | None): Zone and ewg
+            discharge configuration, required only when
+            `quantity_of_interests` includes "discharged",
+            "frac_discharged", "release_rate", "total_discharged",
+            "total_frac_discharged", or "total_release_rate".
     """
 
     project_name: str
@@ -393,6 +416,7 @@ class SimulationConfig:
     pressure_setup: PressureSetup
     process_options: ProcessCoupling
     sim_setup: SimSetUp
+    repository_discharge: RepositoryDischarge | None = None
 
     @classmethod
     def from_yaml(cls, filename):
@@ -454,12 +478,15 @@ class SimulationConfig:
 
         if "source_concentration" in initial_data:
             source_concentration_data = initial_data["source_concentration"]
+            porosity_data = source_concentration_data.get("porosity")
             source_concentration_spec = SourceConcentrationSpec(
                 inventory_mol=[
                     float(value) for value in source_concentration_data["inventory_mol"]
                 ],
-                porosity=float(source_concentration_data["porosity"]),
                 area_repository=float(source_concentration_data["area_repository"]),
+                porosity=(
+                    float(porosity_data) if porosity_data is not None else None
+                ),
             )
             initial_types = []
             initial_values = []
@@ -480,6 +507,13 @@ class SimulationConfig:
                         "supported for initial_condition_nuclide; expected "
                         "'Constant' or 'Function'."
                     )
+
+        repository_discharge_data = data.get("repository_discharge")
+        repository_discharge = None
+        if repository_discharge_data is not None:
+            repository_discharge = RepositoryDischarge(
+                host_rock=repository_discharge_data["host_rock"],
+            )
 
         boundary_data = data["boundary_condition_nuclide"]
         pressure_data = data["pressure_setup"]
@@ -591,4 +625,5 @@ class SimulationConfig:
                 ),
                 linear_solvers=linear_solvers,
             ),
+            repository_discharge=repository_discharge,
         )

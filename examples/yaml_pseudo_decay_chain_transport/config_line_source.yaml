@@ -1,4 +1,4 @@
-project_name: PseudoPointSource
+project_name: PseudoLineSource
 create_python_bc: False
 python_bc_source_value: 0.0
 create_meshes: True
@@ -6,29 +6,58 @@ mesh_dimension: 1
 quantity_of_interests:
   - concentration
   - Flux
+  - discharged
+  - frac_discharged
+  - release_rate
+  - total_discharged
+  - total_frac_discharged
+  - total_release_rate
 source:
-  type: point
-  loc: 0.0
+  type: line
+  start_loc: -16.25
+  end_loc: -13.75
 process_variables:
   - pressure
   - concentration
 secondary_variables:
   - Flux
 initial_condition_nuclide:
-  type:
-    - Constant
-  value:
-    - 1.0
+  source_concentration:
+    # Per-nuclide repository inventory(Cm-247, Am-243,
+    # Pu-239, U-235, Pa-231, Ac-227)
+    inventory_mol:
+      - 32770.0
+      - 20000.0
+      - 10000.0
+      - 5000.0
+      - 2000.0
+      - 1000.0
+    area_repository: 9000000.0
+repository_discharge:
+  host_rock: Pseudo_Claystone
 boundary_condition_nuclide:
   type:
     - Dirichlet
+    - Dirichlet
+    - Dirichlet
+    - Dirichlet
+    - Dirichlet
+    - Dirichlet
   mesh:
+    - point_top
+    - point_top
+    - point_top
+    - point_top
+    - point_top
     - point_top
   value:
     - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
 pressure_setup:
-  # pressure_bottom solves Darcy's law, q = -(kappa/mu)*(dP/dx - rho_f*g),
-  # for a target darcy flux of 1 mm/yr
   pressure_initial: 100000.0
   pressure_top: 100000.0
   pressure_bottom: -15645977.407014478

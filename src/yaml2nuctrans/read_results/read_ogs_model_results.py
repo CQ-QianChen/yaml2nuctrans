@@ -174,8 +174,32 @@ def read_vtu_field(
     return vals
 
 
+DISCHARGE_FIELD_QOIS = {"discharged", "frac_discharged", "release_rate"}
+TOTAL_DISCHARGE_FIELD_QOIS = {
+    "total_discharged",
+    "total_frac_discharged",
+    "total_release_rate",
+}
+ALL_DISCHARGE_QOIS = DISCHARGE_FIELD_QOIS | TOTAL_DISCHARGE_FIELD_QOIS
+
+
+def discharge_result_keys(sim_config, nuclide_database) -> set[str]:
+    """Names of the QoI-dict entries `compute_ewg_discharge` fills, given
+    `sim_config.quantity_of_interests` (e.g. `f"{nuclide}_discharged"`,
+    `"total_release_rate"`)."""
+    requested_qois = set(sim_config.quantity_of_interests)
+    keys = {
+        f"{nuclide}_{field_name}"
+        for field_name in requested_qois & DISCHARGE_FIELD_QOIS
+        for nuclide in nuclide_database.nuclide_names
+    }
+    keys |= requested_qois & TOTAL_DISCHARGE_FIELD_QOIS
+    return keys
+
+
 def build_result_template(sim_config, nuclide_database) -> dict:
     results = {}
+
     for QoI in sim_config.quantity_of_interests:
         if QoI == "concentration":
             for nuclide in nuclide_database.nuclide_names:
@@ -183,8 +207,14 @@ def build_result_template(sim_config, nuclide_database) -> dict:
         elif QoI == "Flux":
             for nuclide in nuclide_database.nuclide_names:
                 results[nuclide + QoI] = {}
+        elif QoI in ALL_DISCHARGE_QOIS:
+            continue
         else:
             results[QoI] = {}
+
+    for key in discharge_result_keys(sim_config, nuclide_database):
+        results[key] = {}
+
     return results
 
 
@@ -227,16 +257,20 @@ def read_sim_results(
     # build the result container ONCE, before the loop
     qoi_results = build_result_template(sim_config, nuclide_database)
 
+    # ewg-discharge QoIs are not OGS point-data fields
+    discharge_qoi_names = discharge_result_keys(sim_config, nuclide_database)
+    spatial_qoi_names = [QoI for QoI in qoi_results if QoI not in discharge_qoi_names]
+
     field_results = read_vtu_field(
         vtu_file_path=results_output_dir,
         pvd_name=f"{sim_config.project_name}.pvd",
-        field_names=qoi_results.keys(),
+        field_names=spatial_qoi_names,
         get_field_component_index=get_field_component_index,
         sort_data=True,  # sort by depth in z direction
         sort_by_index=sort_by_index,
     )
 
-    for QoI in qoi_results.keys():
+    for QoI in spatial_qoi_names:
         for space_time_val in field_results[QoI]:
             key = tuple(
                 space_time_val[c]
@@ -251,20 +285,30 @@ def read_sim_results(
 def sort_results(results: dict, get_field_component_index, sort_by_index: int) -> dict:
     """
     Sort each QoI dict: primary key = time t (last key element),
-    secondary key = the coordinate selected by sort_by_index.
+    secondary key = the coordinate selected by sort_by_index. QoIs keyed
+    by `(zone_or_field_name, t)` (e.g. ewg discharge) have no coordinate
+    to sort by, so they are sorted by time only.
     """
     if sort_by_index in get_field_component_index:
-        # e.g. get_field_component_index=[0, 2], sort_by_index=2 -> key position 1
+        # e.g. get_field_component_index=[0, 2], sort_by_index=2: key position 1
         coord_pos = list(get_field_component_index).index(sort_by_index)
-        sort_key = lambda k: (k[-1], k[coord_pos])
+        spatial_sort_key = lambda k: (k[-1], k[coord_pos])
     else:
-        # requested coordinate was not extracted -> sort by time only
-        sort_key = lambda k: (k[-1],)
+        # requested coordinate was not extracted : sort by time only
+        spatial_sort_key = lambda k: (k[-1],)
 
-    return {
-        qoi_name: {k: qoi_dict[k] for k in sorted(qoi_dict.keys(), key=sort_key)}
-        for qoi_name, qoi_dict in results.items()
-    }
+    time_only_sort_key = lambda k: (k[-1],)
+
+    sorted_results = {}
+    for qoi_name, qoi_dict in results.items():
+        sample_key = next(iter(qoi_dict), None)
+        is_labeled = sample_key is not None and isinstance(sample_key[0], str)
+        sort_key = time_only_sort_key if is_labeled else spatial_sort_key
+        sorted_results[qoi_name] = {
+            k: qoi_dict[k] for k in sorted(qoi_dict.keys(), key=sort_key)
+        }
+
+    return sorted_results
 
 
 def save_dict_to_group(group: h5py.Group, d: dict) -> None:
@@ -276,6 +320,42 @@ def save_dict_to_group(group: h5py.Group, d: dict) -> None:
             group.create_dataset(key, data=np.asarray(value))
 
 
+def _encode_key_columns(keys: list[tuple]) -> tuple[list[np.ndarray], list[bool]]:
+    """Split key tuples into per-position columns for HDF5 storage.
+
+    Each tuple position becomes its own column: a float64 array if every
+    entry at that position is numeric (e.g. a coordinate or time value),
+    otherwise a UTF-8 string array (e.g. a zone name).
+    """
+    columns = []
+    is_numeric = []
+    for dim in range(len(keys[0])):
+        values = [key[dim] for key in keys]
+        try:
+            columns.append(np.array(values, dtype=np.float64))
+            is_numeric.append(True)
+        except (TypeError, ValueError):
+            columns.append(np.array([str(v) for v in values], dtype=object))
+            is_numeric.append(False)
+
+    return columns, is_numeric
+
+
+def _decode_key_columns(
+    keys_group: h5py.Group, n_key_dims: int, key_is_numeric
+) -> list[tuple]:
+    """Inverse of `_encode_key_columns`: rebuild the list of key tuples."""
+    columns = []
+    for dim in range(n_key_dims):
+        column = keys_group[str(dim)][:]
+        if key_is_numeric[dim]:
+            columns.append([float(v) for v in column])
+        else:
+            columns.append([v.decode() if isinstance(v, bytes) else v for v in column])
+
+    return list(zip(*columns))
+
+
 def save_results_to_group(results: dict, parent: h5py.Group) -> None:
     """Writing into an existing group."""
     for qoi_name, qoi_dict in results.items():
@@ -283,9 +363,17 @@ def save_results_to_group(results: dict, parent: h5py.Group) -> None:
 
         keys = list(qoi_dict.keys())
         n_keys = len(keys)
+        n_key_dims = len(keys[0])
 
-        key_arr = np.array(keys, dtype=np.float64)
-        grp.create_dataset("keys", data=key_arr)
+        columns, key_is_numeric = _encode_key_columns(keys)
+        keys_grp = grp.create_group("keys")
+        for dim, (column, numeric) in enumerate(zip(columns, key_is_numeric)):
+            if numeric:
+                keys_grp.create_dataset(str(dim), data=column)
+            else:
+                keys_grp.create_dataset(
+                    str(dim), data=column, dtype=h5py.string_dtype(encoding="utf-8")
+                )
 
         n_samples = next(len(vals) for vals in qoi_dict.values() if vals is not None)
 
@@ -318,7 +406,8 @@ def save_results_to_group(results: dict, parent: h5py.Group) -> None:
         )
         grp.attrs["n_keys"] = n_keys
         grp.attrs["n_samples"] = n_samples
-        grp.attrs["n_key_dims"] = key_arr.shape[1]
+        grp.attrs["n_key_dims"] = n_key_dims
+        grp.attrs["key_is_numeric"] = key_is_numeric
         grp.attrs["is_vector"] = bool(is_vector)
 
 
@@ -364,8 +453,9 @@ def load_results_from_hdf5(h5_path: str) -> dict:
         for qoi_name in f["simulation_results"].keys():
             grp = f["simulation_results"][qoi_name]
 
-            # native Python floats for keys
-            keys = [tuple(float(v) for v in row) for row in grp["keys"][:]]
+            keys = _decode_key_columns(
+                grp["keys"], int(grp.attrs["n_key_dims"]), grp.attrs["key_is_numeric"]
+            )
             data = grp["values"][:]
             is_vector = bool(grp.attrs["is_vector"])
 

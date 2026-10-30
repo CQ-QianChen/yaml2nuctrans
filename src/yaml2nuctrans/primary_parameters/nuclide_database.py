@@ -178,10 +178,8 @@ class NuclideData:
         emitted_energy_data = cls._load_yaml(emitted_energy_file)
         species_type_data = cls._load_yaml(species_type_file)
 
-        # Every nuclide name that appears in any of the three dictionaries is included.
-        nuclide_names = (
-            set(emitted_energy_data)
-            | set(species_type_data)
+        nuclide_names = dict.fromkeys(
+            list(emitted_energy_data) + list(species_type_data)
         )
 
         sorption_by_rock = cls._load_rock_nuclide_data(sorption_data_folder)
@@ -189,7 +187,7 @@ class NuclideData:
 
         nuclides = {}
 
-        for nuclide_name in sorted(nuclide_names):
+        for nuclide_name in nuclide_names:
             energy_data = emitted_energy_data.get(nuclide_name)
             emitted_energy = None
             if energy_data is not None:
